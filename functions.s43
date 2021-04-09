@@ -1,0 +1,99 @@
+#include <msp430xG46x.h>	
+
+
+Debounce     MACRO  cycles
+             LOCAL  L
+             mov.w  cycles,R15     
+L            dec.w  R15                     
+             jnz    L          
+             ENDM
+
+                MODULE    Function
+                PUBLIC    func,func1,func2,PORT1_ISR,ADC12_ISR
+                EXTERN    state,PullUp,PullDown,state3
+                RSEG      CODE
+;----------------------------------------------------------------------------------------------------------
+func            mov.w   #0x0008,&ADC12IE           		; Enable interrupt
+            	bis.w   #ENC,&ADC12CTL0         
+            	bis.b   #0x08,&P6SEL
+
+Mainloop1    	cmp     #3,state
+                jz      state3
+                bis.w   #ADC12SC,&ADC12CTL0     		; Start sampling/conversion
+            	bis.w   #CPUOFF+GIE,SR                 		; LPM0, ADC12_ISR will force exit 
+            	jmp     func
+;-------------------------------------------
+ADC12_ISR          ;  Exit LPM0 on reti
+;-------------------------------------------------------------------------------
+func1           cmp     #1,state
+                jnz     func2
+            	cmp.w   #07FFh,&ADC12MEM3       		; ADC12MEM = A3 > 0.5AVcc?
+            	jlo     Convert
+                add      #-2048,&ADC12MEM3
+                bic      #0xf000,&ADC12MEM3
+          	mov     &ADC12MEM3,&DAC12_0DAT            	                ;   dont have to be convered    
+                jmp     end2
+Convert         cmp.w   #0000h,&ADC12MEM3       		; ADC12MEM = A3 > 0.5AVcc?
+            	jz      hardcode
+                mov     &ADC12MEM3,R13
+                add     #-2048,R13
+                bic     #0xf000,R13
+                add     #-1,R13
+                inv      R13                
+          	mov     R13,&DAC12_0DAT 
+                                           
+end2            bic.w   #CPUOFF,0(SP)                    	; Exit LPM0 on reti
+            	reti        
+hardcode        mov     #07FFh,&DAC12_0DAT
+                bic.w   #CPUOFF,0(SP)                    	; Exit LPM0 on reti
+            	reti
+                
+func2           cmp     #2,state
+                jnz     func1 
+                cmp.w   #07FFh,&ADC12MEM3       		; ADC12MEM = A3 > 0.5AVcc?
+            
+                jlo     lower             
+            
+                add     #-2048,&ADC12MEM3
+                bic     #0xf000,&ADC12MEM3
+               
+                jmp     end1
+lower      
+                mov     #0x0000,&ADC12MEM3                   	; Exit LPM0 on reti
+end1           
+                add     #-2048,&ADC12MEM3
+                bic     #0xf000,&ADC12MEM3
+                mov     &ADC12MEM3,&DAC12_0DAT
+                MOV     &ADC12MEM3,R14
+                bic.w   #CPUOFF,0(SP)                    	; Exit LPM0 on reti
+                reti
+
+
+PORT1_ISR    Debounce #PullUp
+             mov.w   #0x00,&ADC12IE           		; Enable interrupt
+             bic.w   #ENC,&ADC12CTL0         
+             bic.b   #0x08,&P6SEL 
+                                      
+             bit.b  #0x10,&P1IFG   ;check if P1.5 is pushed
+             jnz    P1_1 
+             bit.b  #0x20,&P1IFG   ;check if P1.6 is pushed
+             jnz    P1_2
+             bit.b  #0x40,&P1IFG   ;check if P1.7 is pushed
+             jnz    P1_3                  
+             reti        ; interrupt hapened from another source
+           
+             
+P1_1         mov    #1,state       ; rrLED
+             jmp    exitLPM0        
+P1_2         mov    #2,state       ; rlLED
+             jmp    exitLPM0
+P1_3         mov    #3,state       ; rrLED
+             jmp    exitLPM0    
+             
+exitLPM0     bic    #CPUOFF,0(SP)  ; WAKES THE CPU , 
+             bic.b  #0xf0,&P1IFG  
+             reti
+             
+                ENDMOD
+;=============================================================            
+                END
